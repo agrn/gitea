@@ -334,6 +334,44 @@ func (pc *PushCommits) AvatarLink(email string) string {
 	return pc.avatars[email]
 }
 
+func searchForIssueReference(regex *regexp.Regexp, repo *Repository, c *PushCommit, refMarked map[int64]bool, apply func(issue *Issue) error) error {
+	for _, ref := range regex.FindAllString(c.Message, -1) {
+		ref = ref[strings.IndexByte(ref, byte(' '))+1:]
+		ref = strings.TrimRightFunc(ref, issueIndexTrimRight)
+
+		if len(ref) == 0 {
+			continue
+		}
+
+		// Add repo name if missing
+		if ref[0] == '#' {
+			ref = fmt.Sprintf("%s%s", repo.FullName(), ref)
+		} else if !strings.Contains(ref, "/") {
+			// FIXME: We don't support User#ID syntax yet
+			// return ErrNotImplemented
+			continue
+		}
+
+		issue, err := GetIssueByRef(ref)
+		if err != nil {
+			if IsErrIssueNotExist(err) || err == errMissingIssueNumber {
+				continue
+			}
+			return err
+		}
+
+		if refMarked[issue.ID] {
+			continue
+		}
+		refMarked[issue.ID] = true
+
+		if err = apply(issue); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // UpdateIssuesCommit checks if issues are manipulated by commit message.
 func UpdateIssuesCommit(doer *User, repo *Repository, commits []*PushCommit) error {
 	// Commits are appended in the reverse order.
@@ -341,121 +379,34 @@ func UpdateIssuesCommit(doer *User, repo *Repository, commits []*PushCommit) err
 		c := commits[i]
 
 		refMarked := make(map[int64]bool)
-		for _, ref := range issueReferenceKeywordsPat.FindAllString(c.Message, -1) {
-			ref = ref[strings.IndexByte(ref, byte(' '))+1:]
-			ref = strings.TrimRightFunc(ref, issueIndexTrimRight)
-
-			if len(ref) == 0 {
-				continue
-			}
-
-			// Add repo name if missing
-			if ref[0] == '#' {
-				ref = fmt.Sprintf("%s%s", repo.FullName(), ref)
-			} else if !strings.Contains(ref, "/") {
-				// FIXME: We don't support User#ID syntax yet
-				// return ErrNotImplemented
-				continue
-			}
-
-			issue, err := GetIssueByRef(ref)
-			if err != nil {
-				if IsErrIssueNotExist(err) || err == errMissingIssueNumber {
-					continue
-				}
-				return err
-			}
-
-			if refMarked[issue.ID] {
-				continue
-			}
-			refMarked[issue.ID] = true
-
+		err := searchForIssueReference(issueReferenceKeywordsPat, repo, c, refMarked, func(issue *Issue) error {
 			message := fmt.Sprintf(`<a href="%s/commit/%s">%s</a>`, repo.Link(), c.Sha1, c.Message)
-			if err = CreateRefComment(doer, repo, issue, message, c.Sha1); err != nil {
-				return err
-			}
+			return CreateRefComment(doer, repo, issue, message, c.Sha1)
+		})
+		if err != nil {
+			return err
 		}
 
 		refMarked = make(map[int64]bool)
-		// FIXME: can merge this one and next one to a common function.
-		for _, ref := range issueCloseKeywordsPat.FindAllString(c.Message, -1) {
-			ref = ref[strings.IndexByte(ref, byte(' '))+1:]
-			ref = strings.TrimRightFunc(ref, issueIndexTrimRight)
-
-			if len(ref) == 0 {
-				continue
+		err = searchForIssueReference(issueCloseKeywordsPat, repo, c, refMarked, func(issue *Issue) error {
+			if !(issue.RepoID != repo.ID || issue.IsClosed) {
+				return issue.ChangeStatus(doer, repo, true)
 			}
-
-			// Add repo name if missing
-			if ref[0] == '#' {
-				ref = fmt.Sprintf("%s%s", repo.FullName(), ref)
-			} else if !strings.Contains(ref, "/") {
-				// We don't support User#ID syntax yet
-				// return ErrNotImplemented
-				continue
-			}
-
-			issue, err := GetIssueByRef(ref)
-			if err != nil {
-				if IsErrIssueNotExist(err) || err == errMissingIssueNumber {
-					continue
-				}
-				return err
-			}
-
-			if refMarked[issue.ID] {
-				continue
-			}
-			refMarked[issue.ID] = true
-
-			if issue.RepoID != repo.ID || issue.IsClosed {
-				continue
-			}
-
-			if err = issue.ChangeStatus(doer, repo, true); err != nil {
-				return err
-			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
 
 		// It is conflict to have close and reopen at same time, so refsMarked doesn't need to reinit here.
-		for _, ref := range issueReopenKeywordsPat.FindAllString(c.Message, -1) {
-			ref = ref[strings.IndexByte(ref, byte(' '))+1:]
-			ref = strings.TrimRightFunc(ref, issueIndexTrimRight)
-
-			if len(ref) == 0 {
-				continue
+		err = searchForIssueReference(issueReopenKeywordsPat, repo, c, refMarked, func(issue *Issue) error {
+			if !(issue.RepoID != repo.ID || !issue.IsClosed) {
+				return issue.ChangeStatus(doer, repo, false)
 			}
-
-			// Add repo name if missing
-			if ref[0] == '#' {
-				ref = fmt.Sprintf("%s%s", repo.FullName(), ref)
-			} else if !strings.Contains(ref, "/") {
-				// We don't support User#ID syntax yet
-				// return ErrNotImplemented
-				continue
-			}
-
-			issue, err := GetIssueByRef(ref)
-			if err != nil {
-				if IsErrIssueNotExist(err) || err == errMissingIssueNumber {
-					continue
-				}
-				return err
-			}
-
-			if refMarked[issue.ID] {
-				continue
-			}
-			refMarked[issue.ID] = true
-
-			if issue.RepoID != repo.ID || !issue.IsClosed {
-				continue
-			}
-
-			if err = issue.ChangeStatus(doer, repo, false); err != nil {
-				return err
-			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
 	}
 	return nil
