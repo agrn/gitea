@@ -300,6 +300,20 @@ func CompareDiff(ctx *context.Context) {
 	commits = models.ParseCommitsWithSignature(commits)
 	commits = models.ParseCommitsWithStatus(commits, ctx.Repo.Repository)
 
+	if len(afterCommitID) != 40 {
+		afterCommitID = commit.ID.String()
+	}
+
+	if len(beforeCommitID) != 40 {
+		beforeCommit, err := ctx.Repo.GitRepo.GetCommit(beforeCommitID)
+		if err != nil {
+			ctx.Handle(404, "GetCommit", err)
+			return
+		}
+
+		beforeCommitID = beforeCommit.ID.String()
+	}
+
 	ctx.Data["CommitRepoLink"] = ctx.Repo.RepoLink
 	ctx.Data["Commits"] = commits
 	ctx.Data["CommitCount"] = commits.Len()
