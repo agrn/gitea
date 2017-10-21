@@ -636,7 +636,7 @@ func RegisterRoutes(m *macaron.Macaron) {
 		m.Get("/commit/:sha([a-f0-9]{7,40})\\.:ext(patch|diff)",
 			repo.MustBeNotBare, context.CheckUnit(models.UnitTypeCode), repo.RawDiff)
 
-		m.Get("/compare/:before([a-z0-9]{40})\\.\\.\\.:after([a-z0-9]{40})", repo.SetEditorconfigIfExists,
+		m.Get("/compare/:before([a-z0-9]{7,40})\\.\\.\\.:after([a-z0-9]{7,40})", repo.SetEditorconfigIfExists,
 			repo.SetDiffViewStyle, repo.MustBeNotBare, context.CheckUnit(models.UnitTypeCode), repo.CompareDiff)
 	}, ignSignIn, context.RepoAssignment(), context.UnitTypes(), context.LoadRepoUnits())
 	m.Group("/:username/:reponame", func() {
